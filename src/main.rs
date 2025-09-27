@@ -1,16 +1,7 @@
-// ===============================================================
-// Ray Tracer Diorama voxel (Rust std + rayon + tilemap ASCII)
-// Controlas la colocación de cubos editando un mapa de caracteres.
-// W=Water, S=Sand, G=Grass, D=Dirt, M=Wood, L=Leaves
-// Agua con reflexión/refracción (ior=1.33). 120 frames (video).
-// ===============================================================
-
-use rayon::prelude::*;
 use std::f32::consts::PI;
 use std::fs::{create_dir_all, File};
 use std::io::Write;
 
-// ------------------------- Math -------------------------------
 #[derive(Clone, Copy, Debug, Default)]
 struct Vec3 { x: f32, y: f32, z: f32 }
 
@@ -43,14 +34,13 @@ type Color = Vec3;
 fn clamp01(x:f32)->f32 { x.max(0.0).min(1.0) }
 fn to_u8(x:f32)->u8 { (clamp01(x).powf(1.0/2.2)*255.0 + 0.5) as u8 }
 
-// ------------------------- Ray -------------------------------
 #[derive(Clone, Copy, Debug)]
 struct Ray { o: Vec3, d: Vec3 }
 
 #[derive(Clone)]
 enum Texture {
     Solid(Color),
-    Image(Image),  // <- imagen cargada
+    Image(Image), 
 }
 
 impl Texture {
@@ -69,7 +59,7 @@ struct Material {
     reflectivity: f32,
     transparency: f32,
     ior: f32,
-    tex: Texture,   // <- aquí usamos textura en vez de solo color
+    tex: Texture, 
 }
 
 impl Material {
@@ -93,33 +83,24 @@ impl Image {
         use std::io::{BufRead, Read};
         let mut f = std::fs::File::open(path)?;
         let mut buf = std::io::BufReader::new(&f);
-
-        // Leer cabecera (P6)
         let mut magic = String::new();
         buf.read_line(&mut magic)?;
         assert!(magic.trim() == "P6", "PPM debe ser P6");
-
-        // Leer width height
         let mut dims = String::new();
         buf.read_line(&mut dims)?;
         let parts: Vec<_> = dims.split_whitespace().collect();
         let w: usize = parts[0].parse().unwrap();
         let h: usize = parts[1].parse().unwrap();
-
-        // Leer maxval
         let mut maxv = String::new();
         buf.read_line(&mut maxv)?;
         let maxv: usize = maxv.trim().parse().unwrap();
         assert!(maxv == 255);
-
-        // Leer datos binarios (RGB)
         let mut data = Vec::new();
         buf.read_to_end(&mut data)?;
 
         Ok(Self { w, h, data })
     }
     fn sample(&self, u: f32, v: f32) -> Color {
-        // wrap UV a [0,1]
         let mut uu = u.fract(); if uu < 0.0 { uu += 1.0; }
         let mut vv = v.fract(); if vv < 0.0 { vv += 1.0; }
 
@@ -135,8 +116,6 @@ impl Image {
     }
 }
 
-
-// ------------------------- Geometría -------------------------
 #[derive(Clone)]
 struct Hit { t: f32, p: Vec3, n: Vec3, uv:(f32,f32), mat: Material }
 
@@ -170,20 +149,15 @@ impl Intersect for Aabb {
         } else {
             Vec3::new(0.0,0.0, if tz1 < tz2 {-1.0}else{1.0})
         };
-
-        // UV por cara (proyección cúbica)
         let (u, v) = if n.x.abs() > 0.5 {
-            // ±X → usa (z,y)
             let u = (p.z - self.min.z) / (self.max.z - self.min.z);
             let v = (p.y - self.min.y) / (self.max.y - self.min.y);
             (u, v)
         } else if n.y.abs() > 0.5 {
-            // ±Y → usa (x,z)
             let u = (p.x - self.min.x) / (self.max.x - self.min.x);
             let v = (p.z - self.min.z) / (self.max.z - self.min.z);
             (u, v)
         } else {
-            // ±Z → usa (x,y)
             let u = (p.x - self.min.x) / (self.max.x - self.min.x);
             let v = (p.y - self.min.y) / (self.max.y - self.min.y);
             (u, v)
@@ -193,10 +167,7 @@ impl Intersect for Aabb {
     }
 }
 
-// -------------------------- Luz ------------------------------
 struct PointLight { pos: Vec3, color: Color, intensity: f32 }
-
-// -------------------------- Sky ------------------------------
 enum Sky { Gradient { top: Color, bottom: Color } }
 impl Sky {
     fn sample(&self, dir:Vec3) -> Color {
@@ -209,7 +180,6 @@ impl Sky {
     }
 }
 
-// ------------------------- Cámara ----------------------------
 struct Camera { pos: Vec3, target: Vec3, up: Vec3, fov_deg: f32, aspect: f32 }
 impl Camera {
     fn ray_for(&self, x:f32, y:f32, w:f32, h:f32) -> Ray {
@@ -225,14 +195,13 @@ impl Camera {
     }
 }
 
-// ------------------------- Escena ----------------------------
+
 enum Object { Box(Aabb) }
 impl Intersect for Object { fn intersect(&self, ray:&Ray) -> Option<Hit> { match self { Object::Box(b) => b.intersect(ray) } } }
 
 struct Scene { objects: Vec<Object>, lights: Vec<PointLight>, sky: Sky }
 impl Scene {
     fn trace(&self, ray:&Ray, depth:i32) -> Color {
-        // hit más cercano
         let mut best: Option<Hit> = None;
         let mut best_t = f32::INFINITY;
         for o in &self.objects {
@@ -244,15 +213,12 @@ impl Scene {
         let view = (-ray.d).norm();
         let base = hit.mat.base_color(hit.uv);
 
-
-        // luz directa + sombras
         let mut color = base * 0.08;
         for l in &self.lights {
             let ldir = l.pos - hit.p;
             let dist = ldir.len();
             let ldirn = ldir / dist;
 
-            // sombra
             let shadow_ray = Ray { o: hit.p + hit.n*1e-3, d: ldirn };
             let mut occluded = false;
             for o in &self.objects {
@@ -267,7 +233,6 @@ impl Scene {
             }
         }
 
-        // reflexión / refracción (agua)
         if depth <= 0 { return color; }
         let mut refl_col = Color::new(0.0,0.0,0.0);
         let mut refr_col = Color::new(0.0,0.0,0.0);
@@ -298,7 +263,7 @@ impl Scene {
     }
 }
 
-// ------------------------- I/O -------------------------------
+
 fn write_frame(buffer:&[Color], w:usize, h:usize, path:&str) -> std::io::Result<()> {
     let mut f = File::create(path)?;
     write!(f,"P6\n{} {}\n255\n",w,h)?;
@@ -306,23 +271,23 @@ fn write_frame(buffer:&[Color], w:usize, h:usize, path:&str) -> std::io::Result<
     Ok(())
 }
 
-// --------------------- Helpers de colocación -----------------
+
 fn add_cube(objs:&mut Vec<Object>, x:f32,y:f32,z:f32, sx:f32,sy:f32,sz:f32, mat:&Material){
     let min = Vec3::new(x,y,z);
     let max = Vec3::new(x+sx, y+sy, z+sz);
     objs.push(Object::Box(Aabb::new(min,max,mat.clone())));
 }
-// cubo 1x1x1 en grilla
+
 fn put(objs:&mut Vec<Object>, gx:i32, gy:i32, gz:i32, mat:&Material){
     add_cube(objs, gx as f32, gy as f32, gz as f32, 1.0, 1.0, 1.0, mat);
 }
 
-// Coloca un tilemap ASCII en Y=layer_y (cada char => un bloque)
+
 fn place_tilemap(
     objs:&mut Vec<Object>,
-    origin_x:i32, origin_z:i32,  // esquina superior izquierda del mapa
-    layer_y:f32,                 // altura del bloque (ej: -0.98 para arena, -0.90 agua)
-    h:f32,                       // grosor (altura) del bloque
+    origin_x:i32, origin_z:i32,  
+    layer_y:f32,                 
+    h:f32,                       
     map:&[&str],
     mat_g:&Material, mat_d:&Material, mat_s:&Material, mat_w:&Material, mat_m:&Material, mat_l:&Material
 ){
@@ -343,12 +308,8 @@ fn place_tilemap(
     }
 }
 
-// --------------------------- Main ----------------------------
 fn main() -> std::io::Result<()> {
     let width=800usize; let height=600usize; let aspect=width as f32/height as f32;
-
-    // --- Materiales (colores lisos) ---
-    //let grass = Material{albedo:Color::new(1.,1.,1.),specular:0.2,reflectivity:0.05,transparency:0.,ior:1.,color:Color::new(0.12,0.55,0.12)};
     let grass_img = Image::read_ppm("textures/grass.ppm")?;
     let sand_img = Image::read_ppm("textures/sand.ppm")?;
     let wood_img = Image::read_ppm("textures/wood.ppm")?;
@@ -370,12 +331,12 @@ fn main() -> std::io::Result<()> {
         tex: Texture::Image(sand_img),
     };
     let water = Material {
-        albedo: Color::new(0.9, 0.95, 1.0), // casi blanco (afecta difuso)
-        specular: 0.6,                      // brillos más fuertes
-        reflectivity: 0.25,                 // reflejo medio
-        transparency: 0.7,                  // bastante transparente
-        ior: 1.33,                          // índice de refracción del agua
-        tex: Texture::Solid(Color::new(0.2, 0.4, 0.9)), // azul agua
+        albedo: Color::new(0.9, 0.95, 1.0), 
+        specular: 0.6,                      
+        reflectivity: 0.25,                 
+        transparency: 0.7,                  
+        ior: 1.33,                          
+        tex: Texture::Solid(Color::new(0.2, 0.4, 0.9)), 
     };
 
     let wood = Material {
@@ -395,8 +356,6 @@ fn main() -> std::io::Result<()> {
         tex: Texture::Image(leaves_img),
     };
 
-  
-    // --- Objetos ---
     let mut objs: Vec<Object> = Vec::new();
 
 
@@ -467,6 +426,7 @@ fn main() -> std::io::Result<()> {
         "GGGGGGG_________________",
     ];
     let map4: &[&str] = &[
+        "GGGGGGGGGGGGGGGGGGGGGGGG",
         "_________________GGGGGGG",
         "_MMM_______________GGGGG",
         "_M_M_______________GGGGG",
@@ -552,73 +512,72 @@ fn main() -> std::io::Result<()> {
     ];
     
 
-    // Construir el piso bloque a bloque
     for (rz,row) in map0.iter().enumerate() {
         for (rx,ch) in row.chars().enumerate() {
-            let gx = rx as i32 - (map0[0].len()/2) as i32; // centrado en X
-            let gz = rz as i32 - (map0.len()/2) as i32 - 5; // centrado en Z
+            let gx = rx as i32 - (map0[0].len()/2) as i32; 
+            let gz = rz as i32 - (map0.len()/2) as i32 - 5; 
             match ch {
-                'G' => put(&mut objs, gx, -3, gz, &grass), // grama
-                'S' => put(&mut objs, gx,-3, gz, &sand),  // arena
-                'W' => put(&mut objs, gx, -3, gz, &water), // agua hundida
+                'G' => put(&mut objs, gx, -3, gz, &grass), 
+                'S' => put(&mut objs, gx,-3, gz, &sand),  
+                'W' => put(&mut objs, gx, -3, gz, &water), 
                 _   => {}
             }
         }
     }
-    // Construir el piso bloque a bloque
+
     for (rz,row) in map1.iter().enumerate() {
         for (rx,ch) in row.chars().enumerate() {
-            let gx = rx as i32 - (map1[0].len()/2) as i32; // centrado en X
-            let gz = rz as i32 - (map1.len()/2) as i32 - 5; // centrado en Z
+            let gx = rx as i32 - (map1[0].len()/2) as i32; 
+            let gz = rz as i32 - (map1.len()/2) as i32 - 5; 
             match ch {
-                'G' => put(&mut objs, gx, -2, gz, &grass), // grama
-                'S' => put(&mut objs, gx, -2, gz, &sand),  // arena
-                'W' => put(&mut objs, gx, -2, gz, &water), // agua hundida
+                'G' => put(&mut objs, gx, -2, gz, &grass), 
+                'S' => put(&mut objs, gx, -2, gz, &sand),  
+                'W' => put(&mut objs, gx, -2, gz, &water), 
                 'M' => put(&mut objs, gx, 3, gz, &wood),
                 'L' => put(&mut objs, gx, 3, gz, &leaves),
                 _   => {}
             }
         }
     }
-    // Construir el piso bloque a bloque
+
     for (rz,row) in map2.iter().enumerate() {
         for (rx,ch) in row.chars().enumerate() {
-            let gx = rx as i32 - (map2[0].len()/2) as i32; // centrado en X
-            let gz = rz as i32 - (map2.len()/2) as i32 - 5; // centrado en Z
+            let gx = rx as i32 - (map2[0].len()/2) as i32; 
+            let gz = rz as i32 - (map2.len()/2) as i32 - 5; 
             match ch {
-                'G' => put(&mut objs, gx, -1, gz, &grass), // grama
-                'S' => put(&mut objs, gx, -1, gz, &sand),  // arena
-                'W' => put(&mut objs, gx, -1, gz, &water), // agua hundida
+                'G' => put(&mut objs, gx, -1, gz, &grass), 
+                'S' => put(&mut objs, gx, -1, gz, &sand),  
+                'W' => put(&mut objs, gx, -1, gz, &water),
                 'M' => put(&mut objs, gx, -1, gz, &wood),
                 'L' => put(&mut objs, gx, -1, gz, &leaves),
                 _   => {}
             }
         }
     }
-    // Construir el piso bloque a bloque
+
     for (rz,row) in map3.iter().enumerate() {
         for (rx,ch) in row.chars().enumerate() {
-            let gx = rx as i32 - (map3[0].len()/2) as i32; // centrado en X
-            let gz = rz as i32 - (map3.len()/2) as i32 - 5; // centrado en Z
+            let gx = rx as i32 - (map3[0].len()/2) as i32; 
+            let gz = rz as i32 - (map3.len()/2) as i32 - 5; 
             match ch {
-                'G' => put(&mut objs, gx, 0, gz, &grass), // grama
-                'S' => put(&mut objs, gx, 0, gz, &sand),  // arena
-                'W' => put(&mut objs, gx, 0, gz, &water), // agua hundida
+                'G' => put(&mut objs, gx, 0, gz, &grass), 
+                'S' => put(&mut objs, gx, 0, gz, &sand),  
+                'W' => put(&mut objs, gx, 0, gz, &water), 
                 'M' => put(&mut objs, gx, 0, gz, &wood),
                 'L' => put(&mut objs, gx, 0, gz, &leaves),
                 _   => {}
             }
         }
     }
-    // Construir el piso bloque a bloque
+
     for (rz,row) in map4.iter().enumerate() {
         for (rx,ch) in row.chars().enumerate() {
-            let gx = rx as i32 - (map4[0].len()/2) as i32; // centrado en X
-            let gz = rz as i32 - (map4.len()/2) as i32 - 5; // centrado en Z
+            let gx = rx as i32 - (map4[0].len()/2) as i32; 
+            let gz = rz as i32 - (map4.len()/2) as i32 - 5; 
             match ch {
-                'G' => put(&mut objs, gx, 1, gz, &grass), // grama
-                'S' => put(&mut objs, gx, 1, gz, &sand),  // arena
-                'W' => put(&mut objs, gx, 1, gz, &water), // agua hundida
+                'G' => put(&mut objs, gx, 1, gz, &grass), 
+                'S' => put(&mut objs, gx, 1, gz, &sand),  
+                'W' => put(&mut objs, gx, 1, gz, &water), 
                 'M' => put(&mut objs, gx, 1, gz, &wood),
                 'L' => put(&mut objs, gx, 1, gz, &leaves),
                 _   => {}
@@ -628,12 +587,12 @@ fn main() -> std::io::Result<()> {
     
     for (rz,row) in map5.iter().enumerate() {
         for (rx,ch) in row.chars().enumerate() {
-            let gx = rx as i32 - (map5[0].len()/2) as i32; // centrado en X
-            let gz = rz as i32 - (map5.len()/2) as i32 - 5; // centrado en Z
+            let gx = rx as i32 - (map5[0].len()/2) as i32; 
+            let gz = rz as i32 - (map5.len()/2) as i32 - 5; 
             match ch {
-                'G' => put(&mut objs, gx, 2, gz, &grass), // grama
-                'S' => put(&mut objs, gx, 2, gz, &sand),  // arena
-                'W' => put(&mut objs, gx, 2, gz, &water), // agua hundida
+                'G' => put(&mut objs, gx, 2, gz, &grass), 
+                'S' => put(&mut objs, gx, 2, gz, &sand),  
+                'W' => put(&mut objs, gx, 2, gz, &water), 
                 'M' => put(&mut objs, gx, 2, gz, &wood),
                 'L' => put(&mut objs, gx, 2, gz, &leaves),
                 _   => {}
@@ -642,12 +601,12 @@ fn main() -> std::io::Result<()> {
     }
     for (rz,row) in map6.iter().enumerate() {
         for (rx,ch) in row.chars().enumerate() {
-            let gx = rx as i32 - (map6[0].len()/2) as i32; // centrado en X
-            let gz = rz as i32 - (map6.len()/2) as i32 - 5; // centrado en Z
+            let gx = rx as i32 - (map6[0].len()/2) as i32; 
+            let gz = rz as i32 - (map6.len()/2) as i32 - 5; 
             match ch {
-                'G' => put(&mut objs, gx, 3, gz, &grass), // grama
-                'S' => put(&mut objs, gx, 3, gz, &sand),  // arena
-                'W' => put(&mut objs, gx, 3, gz, &water), // agua hundida
+                'G' => put(&mut objs, gx, 3, gz, &grass), 
+                'S' => put(&mut objs, gx, 3, gz, &sand),  
+                'W' => put(&mut objs, gx, 3, gz, &water), 
                 'M' => put(&mut objs, gx, 3, gz, &wood),
                 'L' => put(&mut objs, gx, 3, gz, &leaves),
                 _   => {}
@@ -656,12 +615,12 @@ fn main() -> std::io::Result<()> {
     }
     for (rz,row) in map7.iter().enumerate() {
         for (rx,ch) in row.chars().enumerate() {
-            let gx = rx as i32 - (map7[0].len()/2) as i32; // centrado en X
-            let gz = rz as i32 - (map7.len()/2) as i32 - 5; // centrado en Z
+            let gx = rx as i32 - (map7[0].len()/2) as i32; 
+            let gz = rz as i32 - (map7.len()/2) as i32 - 5; 
             match ch {
-                'G' => put(&mut objs, gx, 4, gz, &grass), // grama
-                'S' => put(&mut objs, gx, 4, gz, &sand),  // arena
-                'W' => put(&mut objs, gx, 4, gz, &water), // agua hundida
+                'G' => put(&mut objs, gx, 4, gz, &grass),
+                'S' => put(&mut objs, gx, 4, gz, &sand),  
+                'W' => put(&mut objs, gx, 4, gz, &water), 
                 'M' => put(&mut objs, gx, 4, gz, &wood),
                 'L' => put(&mut objs, gx, 4, gz, &leaves),
                 _   => {}
@@ -670,12 +629,12 @@ fn main() -> std::io::Result<()> {
     }
     for (rz,row) in map8.iter().enumerate() {
         for (rx,ch) in row.chars().enumerate() {
-            let gx = rx as i32 - (map8[0].len()/2) as i32; // centrado en X
-            let gz = rz as i32 - (map8.len()/2) as i32 - 5; // centrado en Z
+            let gx = rx as i32 - (map8[0].len()/2) as i32; 
+            let gz = rz as i32 - (map8.len()/2) as i32 - 5; 
             match ch {
-                'G' => put(&mut objs, gx, 5, gz, &grass), // grama
-                'S' => put(&mut objs, gx, 5, gz, &sand),  // arena
-                'W' => put(&mut objs, gx, 5, gz, &water), // agua hundida
+                'G' => put(&mut objs, gx, 5, gz, &grass), 
+                'S' => put(&mut objs, gx, 5, gz, &sand),  
+                'W' => put(&mut objs, gx, 5, gz, &water), 
                 'M' => put(&mut objs, gx, 5, gz, &wood),
                 'L' => put(&mut objs, gx, 5, gz, &leaves),
                 _   => {}
@@ -684,15 +643,19 @@ fn main() -> std::io::Result<()> {
     }
 
 
-    // Luces
     let lights = vec![
         PointLight{ pos:Vec3::new(-10.0, 7.0,  2.0), color:Color::new(1.0,0.93,0.86), intensity:140.0 },
         PointLight{ pos:Vec3::new(  8.0, 5.0,  8.0), color:Color::new(0.86,0.92,1.0), intensity:110.0 },
     ];
-    let sky = Sky::Gradient { top: Color::new(0.95,0.60,0.75), bottom: Color::new(0.05,0.10,0.20) };
+
+    let sky = Sky::Gradient {
+        top: Color::new(0.00, 0.02, 0.05),   
+        bottom: Color::new(0.0, 0.0, 0.05), 
+    };
+
     let scene = Scene { objects: objs, lights, sky };
 
-    let frames = 120usize;
+    let frames = 240usize;
     create_dir_all("frames")?;
     let mut buffer = vec![Color::new(0.0,0.0,0.0); width*height];
 
@@ -700,7 +663,7 @@ fn main() -> std::io::Result<()> {
         let t = i as f32 / frames as f32;
         let ang = t * 2.0 * PI;
         let radius = 14.0;
-        //camera settings
+
         let cam = Camera {
             pos: Vec3::new(ang.cos()*radius, 5.0, ang.sin()*radius - 8.0),
             target: Vec3::new(0.0, -1.0, -8.0),   
@@ -709,12 +672,14 @@ fn main() -> std::io::Result<()> {
             aspect,
         };
 
-        buffer.par_iter_mut().enumerate().for_each(|(idx, c)| {
+        for (idx, c) in buffer.iter_mut().enumerate() {
             let x = (idx % width) as f32;
             let y = (idx / width) as f32;
             let ray = cam.ray_for(x, y, width as f32, height as f32);
             *c = scene.trace(&ray, 5);
-        });
+        }
+
+
 
         let path = format!("frames/frame_{:03}.ppm", i);
         write_frame(&buffer, width, height, &path)?;

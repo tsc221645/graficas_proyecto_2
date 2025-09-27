@@ -1,1 +1,7 @@
-/target
+# Carpeta de compilación
+/target/
+
+# Archivos y carpetas de salida del render
+/frames/
+/frame.ppm
+*.mp4
