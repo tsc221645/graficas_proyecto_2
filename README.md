@@ -6,7 +6,7 @@
 El proyecto consiste en elaborar un diorama utilizando cubos texturizados por medio del raytracing. Para elaborarlo se utilizó Rust sin ninguna librería externa para hacer el renderizado. Para poder elaborar el video se utilizó la herramienta de [ffmpeg](https://ffmpeg.org) para transformar los archivos .ppm a un .mp4. 
 
 ### Video
-[link del video]()
+[link del video](https://youtu.be/1MC8LG-DyLI)
 
 ### Como Ejecutar
 Para ejecutar el código se debe clonar el repositorio y correr los siguientes comandos:
